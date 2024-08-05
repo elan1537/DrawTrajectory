@@ -1,119 +1,112 @@
 import cv2
 import numpy as np
-import time
 from collections import deque
-from vector import Vector
-from point import Point
+from vector import Vector  # 사용자 정의 Vector 클래스 사용
 
 # Constants
-DT = 0.01
 RECENT_POINT = 10
+DECAY_FACTOR = 0.9  # 속도가 감소하는 비율
+MAX_SPEED = 20  # 속도의 최대값
 
 # Global variables
-init_point = None
-start_point = None
-middle_target = None
-target_point = None
-now_p = None
-trajectories = deque()
-queue_point = deque()
-is_drawing_start = False
+drag_activate = False
+h, w = 2000, 2000
+
+canvas = np.zeros((h, w, 3), np.uint8)
+x1, y1 = -1, -1
+last_points = deque(maxlen=RECENT_POINT)
+speed = 0  # 현재 속도를 저장할 변수
+
+# 초기 중심점 설정
+start_point = np.array([w // 2, h // 2], dtype=np.float64)  # 실수형 배열로 정의
+current_point = start_point.copy()  # 현재 점의 위치
 
 
 def canvas_motion_event(event, x, y, flags, param):
-    global is_drawing_start, queue_point, img, init_point, middle_target, target_point
+    global drag_activate, x1, y1, canvas, last_points, speed
 
     if event == cv2.EVENT_LBUTTONDOWN:
-        if not is_drawing_start:
-            is_drawing_start = True
-            init_point = Point(x, y)
-            middle_target = None
-            target_point = None
-        else:
-            is_drawing_start = False
-            queue_point.clear()
-            target_point = Point(x, y)
+        drag_activate = True
+        x1, y1 = x, y
 
-    if is_drawing_start:
-        queue_point.append(Point(x, y))
+    elif event == cv2.EVENT_MOUSEMOVE:
+        if drag_activate:
+            last_points.append((x, y))
+
+    elif event == cv2.EVENT_LBUTTONUP:
+        drag_activate = False
 
 
-def position(point: Point, v: Vector, t):
-    return Point(point.x + v.x * (t), point.y + v.y * (t))
+cv2.namedWindow("Canvas")
+cv2.setMouseCallback("Canvas", canvas_motion_event)
 
 
-def direction(points, normalize=True):
-    if not points:
-        return Vector(0, 0)
+cv2.line(canvas, (0, h // 2), (w, h // 2), (255, 255, 255), 1)
+cv2.line(canvas, (w // 2, 0), (w // 2, h), (255, 255, 255), 1)
 
-    v_tot = Point.to_vector(points[0], points[-1])
-    return v_tot.normalize() if normalize else v_tot
+while True:
+    temp_canvas = canvas.copy()
 
+    if drag_activate and len(last_points) > 1:
+        v_tot = Vector(0, 0)
+        for idx in range(len(last_points) - 1):
+            p1 = last_points[idx]
+            p2 = last_points[idx + 1]
+            v_tot += Vector(p2[0] - p1[0], p2[1] - p1[1])
 
-def render(canvas):
-    global target_point
-    canvas.fill(0)
+        l = v_tot.dist()
+        # 평균 벡터 계산
+        v_tot.x /= len(last_points) - 1
+        v_tot.y /= len(last_points) - 1
 
-    for point in queue_point:
-        cv2.circle(canvas, tuple(point), 3, (255, 255, 255), -1)
+        speed = l  # 드래그 중일 때 속도 업데이트
 
-    for i in range(len(queue_point) - 1):
-        p1, p2 = queue_point[i], queue_point[i + 1]
-        cv2.line(canvas, tuple(p1), tuple(p2), (255, 255, 255), 1)
+        # 속도 제한
+        if speed > MAX_SPEED:
+            speed = MAX_SPEED
 
-    if target_point:
-        cv2.circle(canvas, (target_point.x, target_point.y), 25, (255, 0, 255), -1)
+        if l != 0:
+            v_normal = Vector(v_tot.x / l, v_tot.y / l)
 
-    if now_p:
-        cv2.circle(canvas, (int(now_p.x), int(now_p.y)), 25, (0, 0, 255), -1)
+        # 현재 위치 업데이트
+        current_point += np.array([v_normal.x * speed, v_normal.y * speed])
 
-    for tra in trajectories:
-        cv2.circle(canvas, (int(tra.x), int(tra.y)), 3, (10, 255, 10), -1)
+        # 위치가 화면을 벗어나지 않도록 조정
+        current_point = np.clip(current_point, [0, 0], [w, h])
 
-    cv2.imshow("Canvas", canvas)
+        # 라인과 텍스트를 temp_canvas에 그리기
+        cv2.circle(temp_canvas, tuple(current_point.astype(int)), 5, (0, 255, 0), -1)
+        last_points.clear()  # 점이 움직였으면 포인트 목록 초기화
 
-
-def update_positions(diff):
-    global now_p, init_point, start_point, middle_target, target_point, queue_point
-
-    if len(queue_point) > RECENT_POINT:
-        queue_point.popleft()
-
-    if init_point:
-        now_p = init_point
-        start_point = init_point
-        init_point = None
-
-    if target_point:
-        to_dir = direction([now_p, target_point], normalize=False)
-        now_p = position(now_p, to_dir, diff)
-        queue_point.clear()
-    elif queue_point:
-        middle_target = queue_point[-1]
-        to_dir = direction([now_p, middle_target], normalize=False)
     else:
-        to_dir = direction(queue_point, normalize=False)
+        # 드래그가 끝난 후 속도 감소
+        speed *= DECAY_FACTOR
+        if speed < 0.1:  # 속도가 매우 작아지면 0으로 설정
+            speed = 0
 
-    if now_p:
-        now_p = position(now_p, to_dir, diff)
-        trajectories.append(now_p)
+        # 속도와 방향에 따라 점의 위치 업데이트
+        if speed > 0:
+            current_point += np.array([v_normal.x * speed, v_normal.y * speed])
+            current_point = np.clip(current_point, [0, 0], [w, h])
 
+        # 현재 위치에 점 그리기
+        cv2.circle(temp_canvas, tuple(current_point.astype(int)), 5, (0, 255, 0), -1)
 
-if __name__ == "__main__":
-    cv2.namedWindow("Canvas")
-    cv2.setMouseCallback("Canvas", canvas_motion_event)
+    # 속도 표시
+    cv2.putText(
+        temp_canvas,
+        f"Speed: {speed:.2f}",
+        (10, 30),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        1,
+        (255, 255, 255),
+        2,
+    )
 
-    start_time = time.time()
-    canvas = np.zeros((2160, 3840, 3), np.uint8)
+    # 업데이트된 temp_canvas를 디스플레이
+    cv2.imshow("Canvas", temp_canvas)
 
-    while True:
-        diff = time.time() - start_time
-        if diff >= DT:
-            update_positions(diff)
-            render(canvas)
-            start_time = time.time()
+    if cv2.waitKey(1) & 0xFF == ord("q"):
+        break
 
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
-
-    cv2.destroyAllWindows()
+cv2.destroyAllWindows()
