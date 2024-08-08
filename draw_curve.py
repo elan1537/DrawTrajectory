@@ -22,24 +22,71 @@ SPEED_HISTORY_SIZE = 100  # 그래프에 표시할 속도 기록 수
 start_point_offset = np.array([224.91, 109.15], dtype=np.float64)  # 오프셋 정의
 
 
-def update_graph(frame, speed_data):
-    plt.cla()
-    plt.plot(speed_data, label="Mouse Speed")
-    plt.ylim(0, MAX_SPEED)
-    plt.xlabel("Time (frames)")
-    plt.ylabel("Speed (mm/s)")
-    plt.title("Real-time Mouse Speed")
-    plt.legend(loc="upper right")
+def update_graphs(frame, speed_data, tcp_speed_data, total_tcp_speed, ax1, ax2, ax3):
+    # 마우스 속도 그래프 업데이트
+    ax1.cla()
+    ax1.plot(speed_data, label="Mouse Speed")
+    ax1.set_ylim(0, MAX_SPEED + 20)
+    ax1.set_xlabel("Time (frames)")
+    ax1.set_ylabel("Speed (mm/s)")
+    ax1.set_title("Real-time Mouse Speed")
+    ax1.legend(loc="upper right")
+    ax1.grid(True)
+
+    # TCP 속도 그래프 업데이트 (x, y, z)
+    ax2.cla()
+    ax2.plot(tcp_speed_data[0], label="TCP X Speed")
+    ax2.plot(tcp_speed_data[1], label="TCP Y Speed")
+    ax2.plot(tcp_speed_data[2], label="TCP Z Speed")
+    ax2.set_ylim(-5, 5)
+    ax2.set_xlabel("Time (frames)")
+    ax2.set_ylabel("TCP Speed (mm/s)")
+    ax2.set_title("Real-time TCP Speed")
+    ax2.legend(loc="upper right")
+    ax2.grid(True)
+
+    # TCP 전체 속력 그래프 업데이트
+    ax3.cla()
+    ax3.plot(total_tcp_speed, label="Total TCP Speed", color="purple")
+    ax3.set_ylim(0, 5)
+    ax3.set_xlabel("Time (frames)")
+    ax3.set_ylabel("Speed (mm/s)")
+    ax3.set_title("Total TCP Speed")
+    ax3.legend(loc="upper right")
+    ax3.grid(True)
+
+
+def graph_process(speed_history, tcp_speed_history, total_tcp_speed_history):
+    plt.ion()  # Interactive mode on to handle multiple figures
+
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 12))
+
+    ani = FuncAnimation(
+        fig,
+        update_graphs,
+        fargs=(
+            speed_history,
+            tcp_speed_history,
+            total_tcp_speed_history,
+            ax1,
+            ax2,
+            ax3,
+        ),
+        interval=100,
+    )
+
     plt.tight_layout()
+    plt.show(block=True)  # Show figures in separate windows
 
 
-def graph_process(speed_history):
-    fig = plt.figure()
-    ani = FuncAnimation(fig, update_graph, fargs=(speed_history,), interval=100)
-    plt.show()
-
-
-def main_loop(robot_ip, initial_velocity, initial_acceleration, speed_history):
+def main_loop(
+    robot_ip,
+    initial_velocity,
+    initial_acceleration,
+    speed_history,
+    tcp_speed_history,
+    total_tcp_speed_history,
+):
     # Pygame 초기 설정
     pygame.init()
     h, w = 1200, 1200
@@ -54,14 +101,35 @@ def main_loop(robot_ip, initial_velocity, initial_acceleration, speed_history):
     velocity_slider = pygame_gui.elements.UIHorizontalSlider(
         relative_rect=pygame.Rect((50, 100), (300, 50)),
         start_value=initial_velocity,
-        value_range=(0.01, 0.1),
+        value_range=(0.0, 1.0),
         manager=manager,
     )
 
     acceleration_slider = pygame_gui.elements.UIHorizontalSlider(
         relative_rect=pygame.Rect((50, 160), (300, 50)),
         start_value=initial_acceleration,
-        value_range=(0.001, 0.1),
+        value_range=(0.0, 1.0),
+        manager=manager,
+    )
+
+    dt_slider = pygame_gui.elements.UIHorizontalSlider(
+        relative_rect=pygame.Rect((50, 220), (300, 50)),
+        start_value=1 / 60,
+        value_range=(0.008, 0.1),
+        manager=manager,
+    )
+
+    lookahead_slider = pygame_gui.elements.UIHorizontalSlider(
+        relative_rect=pygame.Rect((50, 280), (300, 50)),
+        start_value=1 / 60 * 10,
+        value_range=(0.03, 0.2),
+        manager=manager,
+    )
+
+    gain_slider = pygame_gui.elements.UIHorizontalSlider(
+        relative_rect=pygame.Rect((50, 340), (300, 50)),
+        start_value=100,
+        value_range=(100, 2000),
         manager=manager,
     )
 
@@ -110,11 +178,19 @@ def main_loop(robot_ip, initial_velocity, initial_acceleration, speed_history):
             if event.type == pygame.QUIT:
                 running = False
 
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_q:  # 'q' 키를 눌렀을 때
+                    running = False
+
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 # 슬라이더가 클릭된 경우 드래그를 비활성화
-                if velocity_slider.rect.collidepoint(
-                    event.pos
-                ) or acceleration_slider.rect.collidepoint(event.pos):
+                if (
+                    velocity_slider.rect.collidepoint(event.pos)
+                    or acceleration_slider.rect.collidepoint(event.pos)
+                    or dt_slider.rect.collidepoint(event.pos)
+                    or lookahead_slider.rect.collidepoint(event.pos)
+                    or gain_slider.rect.collidepoint(event.pos)
+                ):
                     slider_active = True
                 else:
                     drag_activate = True
@@ -125,7 +201,6 @@ def main_loop(robot_ip, initial_velocity, initial_acceleration, speed_history):
             elif event.type == pygame.MOUSEMOTION:
                 if drag_activate and not slider_active:
                     last_points.append(event.pos)
-                    trajectory.add((event.pos[0] + 224.91, event.pos[1] + 109.15))
 
             elif event.type == pygame.MOUSEBUTTONUP:
                 if slider_active:
@@ -138,9 +213,12 @@ def main_loop(robot_ip, initial_velocity, initial_acceleration, speed_history):
         time_delta = clock.tick(60) / 1000.0
         manager.update(time_delta)
 
-        # 슬라이더로부터 velocity, acceleration 값 읽기
+        # 슬라이더로부터 velocity, acceleration, dt, lookahead_time, gain 값 읽기
         velocity = velocity_slider.get_current_value()
         acceleration = acceleration_slider.get_current_value()
+        dt = dt_slider.get_current_value()
+        lookahead_time = lookahead_slider.get_current_value()
+        gain = gain_slider.get_current_value()
 
         if drag_activate and last_position is not None:
             # 마우스 이동 거리 계산
@@ -183,7 +261,13 @@ def main_loop(robot_ip, initial_velocity, initial_acceleration, speed_history):
         trajectory.add(tuple(current_point))
         # TCP 속도 가져오기
         tcp_speed_vector = rtde_r.getActualTCPSpeed()[:3]
-        tcp_speed = np.linalg.norm(tcp_speed_vector) * 100
+
+        tcp_speed_history[0].append(tcp_speed_vector[0])
+        tcp_speed_history[1].append(tcp_speed_vector[1])
+        tcp_speed_history[2].append(tcp_speed_vector[2])
+
+        total_speed = np.linalg.norm(tcp_speed_vector)
+        total_tcp_speed_history.append(total_speed)
 
         pygame.draw.circle(screen, GREEN, tuple(current_point.astype(int)), 5)
 
@@ -201,7 +285,7 @@ def main_loop(robot_ip, initial_velocity, initial_acceleration, speed_history):
         if speed and (time.time() - init_period > 1 / 60):
             joint_q = rtde_c.getInverseKinematics(to_)
             # acc, vel, t, lookahead_time, gain
-            rtde_c.servoJ(joint_q, acceleration, velocity, 1 / 60, 1 / 60 * 10, 150)
+            rtde_c.servoJ(joint_q, acceleration, velocity, dt, lookahead_time, gain)
 
             x, y = rtde_r.getActualTCPPose()[:2]
             device_points.add((int(x * 1000) + w // 2, -int(y * 1000) + h // 2))
@@ -209,7 +293,9 @@ def main_loop(robot_ip, initial_velocity, initial_acceleration, speed_history):
         init_period = time.time()
 
         speed_text = font.render(f"Mouse Speed: {speed:.2f} mm/s", True, WHITE)
-        tcp_speed_text = font.render(f"TCP Speed: {tcp_speed:.2f} mm/s", True, WHITE)
+        tcp_speed_text = font.render(
+            f"TCP Speed: {np.linalg.norm(tcp_speed_vector):.2f} mm/s", True, WHITE
+        )
         not_allowed_text = font.render(f"Not Allowed", True, WHITE)
         screen.blit(speed_text, (10, 10))
         screen.blit(tcp_speed_text, (10, 40))
@@ -220,8 +306,14 @@ def main_loop(robot_ip, initial_velocity, initial_acceleration, speed_history):
         acceleration_text = font.render(
             f"Acceleration: {acceleration:.3f} m/s²", True, WHITE
         )
+        dt_text = font.render(f"dt: {dt:.3f} s", True, WHITE)
+        lookahead_text = font.render(f"Lookahead: {lookahead_time:.3f} s", True, WHITE)
+        gain_text = font.render(f"Gain: {int(gain)}", True, WHITE)
         screen.blit(velocity_text, (360, 95))
         screen.blit(acceleration_text, (360, 155))
+        screen.blit(dt_text, (360, 215))
+        screen.blit(lookahead_text, (360, 275))
+        screen.blit(gain_text, (360, 335))
 
         manager.draw_ui(screen)
         pygame.display.flip()
@@ -241,9 +333,18 @@ if __name__ == "__main__":
     # 속도 기록을 위한 공유 리스트 생성
     mp_manager = mp.Manager()
     speed_history = mp_manager.list([0] * SPEED_HISTORY_SIZE)
+    tcp_speed_history = [
+        mp_manager.list([0] * SPEED_HISTORY_SIZE) for _ in range(3)
+    ]  # x, y, z 각각의 속도를 저장
+    total_tcp_speed_history = mp_manager.list(
+        [0] * SPEED_HISTORY_SIZE
+    )  # 전체 TCP 속력을 저장
 
     # 그래프를 그리는 프로세스 시작
-    graph_proc = mp.Process(target=graph_process, args=(speed_history,))
+    graph_proc = mp.Process(
+        target=graph_process,
+        args=(speed_history, tcp_speed_history, total_tcp_speed_history),
+    )
     graph_proc.start()
 
     main_loop(
@@ -251,6 +352,8 @@ if __name__ == "__main__":
         initial_velocity=args.velocity,
         initial_acceleration=args.acceleration,
         speed_history=speed_history,
+        tcp_speed_history=tcp_speed_history,
+        total_tcp_speed_history=total_tcp_speed_history,
     )
 
     # 프로세스가 종료되기를 기다림
