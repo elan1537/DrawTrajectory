@@ -47,6 +47,24 @@ def main_loop(robot_ip, initial_velocity, initial_acceleration, speed_history):
     pygame.display.set_caption("TCP Speed Visualization")
     clock = pygame.time.Clock()
 
+    # Pygame GUI 설정
+    manager = pygame_gui.UIManager((w, h))
+
+    # 슬라이더 생성
+    velocity_slider = pygame_gui.elements.UIHorizontalSlider(
+        relative_rect=pygame.Rect((50, 100), (300, 50)),
+        start_value=initial_velocity,
+        value_range=(0.01, 0.1),
+        manager=manager,
+    )
+
+    acceleration_slider = pygame_gui.elements.UIHorizontalSlider(
+        relative_rect=pygame.Rect((50, 160), (300, 50)),
+        start_value=initial_acceleration,
+        value_range=(0.001, 0.1),
+        manager=manager,
+    )
+
     # Colors
     WHITE = (255, 255, 255)
     GREEN = (0, 255, 0)
@@ -94,10 +112,15 @@ def main_loop(robot_ip, initial_velocity, initial_acceleration, speed_history):
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 # 슬라이더가 클릭된 경우 드래그를 비활성화
-                drag_activate = True
-                last_points.clear()
-                device_points.clear()
-                last_position = event.pos  # 마우스가 눌렸을 때 초기 위치 설정
+                if velocity_slider.rect.collidepoint(
+                    event.pos
+                ) or acceleration_slider.rect.collidepoint(event.pos):
+                    slider_active = True
+                else:
+                    drag_activate = True
+                    last_points.clear()
+                    device_points.clear()
+                    last_position = event.pos  # 마우스가 눌렸을 때 초기 위치 설정
 
             elif event.type == pygame.MOUSEMOTION:
                 if drag_activate and not slider_active:
@@ -109,6 +132,15 @@ def main_loop(robot_ip, initial_velocity, initial_acceleration, speed_history):
                     slider_active = False
                 if event.button == 1:
                     drag_activate = False
+
+            manager.process_events(event)
+
+        time_delta = clock.tick(60) / 1000.0
+        manager.update(time_delta)
+
+        # 슬라이더로부터 velocity, acceleration 값 읽기
+        velocity = velocity_slider.get_current_value()
+        acceleration = acceleration_slider.get_current_value()
 
         if drag_activate and last_position is not None:
             # 마우스 이동 거리 계산
@@ -169,14 +201,7 @@ def main_loop(robot_ip, initial_velocity, initial_acceleration, speed_history):
         if speed and (time.time() - init_period > 1 / 60):
             joint_q = rtde_c.getInverseKinematics(to_)
             # acc, vel, t, lookahead_time, gain
-            rtde_c.servoJ(
-                joint_q,
-                initial_acceleration,
-                initial_velocity,
-                1 / 60,
-                1 / 60 * 10,
-                150,
-            )
+            rtde_c.servoJ(joint_q, acceleration, velocity, 1 / 60, 1 / 60 * 10, 150)
 
             x, y = rtde_r.getActualTCPPose()[:2]
             device_points.add((int(x * 1000) + w // 2, -int(y * 1000) + h // 2))
@@ -190,6 +215,15 @@ def main_loop(robot_ip, initial_velocity, initial_acceleration, speed_history):
         screen.blit(tcp_speed_text, (10, 40))
         screen.blit(not_allowed_text, (w // 2 - 45, h // 2 - 4))
 
+        # 슬라이더 값 텍스트
+        velocity_text = font.render(f"Velocity: {velocity:.3f} m/s", True, WHITE)
+        acceleration_text = font.render(
+            f"Acceleration: {acceleration:.3f} m/s²", True, WHITE
+        )
+        screen.blit(velocity_text, (360, 95))
+        screen.blit(acceleration_text, (360, 155))
+
+        manager.draw_ui(screen)
         pygame.display.flip()
         clock.tick(60)  # 초당 60프레임으로 업데이트
 
