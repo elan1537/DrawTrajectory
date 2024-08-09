@@ -1,17 +1,17 @@
-import pygame
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
+import argparse
+import multiprocessing as mp
+import time
 from collections import deque
-from vector import Vector
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pygame
+import pygame_gui
+from matplotlib.animation import FuncAnimation
 from rtde_control import RTDEControlInterface as RTDEControl
 from rtde_receive import RTDEReceiveInterface as RTDEReceive
 
-
-import pygame_gui
-import multiprocessing as mp
-import argparse
-import time
+from vector import Vector
 
 # Constants
 RECENT_POINT = 10
