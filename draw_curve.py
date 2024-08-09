@@ -15,7 +15,6 @@ import time
 
 # Constants
 RECENT_POINT = 10
-MAX_SPEED = 20  # 속도의 최대값
 SPEED_HISTORY_SIZE = 100  # 그래프에 표시할 속도 기록 수
 
 # 초기 중심점 설정
@@ -26,7 +25,7 @@ def update_graphs(frame, speed_data, tcp_speed_data, total_tcp_speed, ax1, ax2, 
     # 마우스 속도 그래프 업데이트
     ax1.cla()
     ax1.plot(speed_data, label="Mouse Speed")
-    ax1.set_ylim(0, MAX_SPEED + 20)
+    ax1.set_ylim(0, max(speed_data) * 1.1)  # 최대 속도에 맞춰 그래프 확대
     ax1.set_xlabel("Time (frames)")
     ax1.set_ylabel("Speed (mm/s)")
     ax1.set_title("Real-time Mouse Speed")
@@ -38,7 +37,7 @@ def update_graphs(frame, speed_data, tcp_speed_data, total_tcp_speed, ax1, ax2, 
     ax2.plot(tcp_speed_data[0], label="TCP X Speed")
     ax2.plot(tcp_speed_data[1], label="TCP Y Speed")
     ax2.plot(tcp_speed_data[2], label="TCP Z Speed")
-    ax2.set_ylim(-5, 5)
+    ax2.set_ylim(-2, 2)
     ax2.set_xlabel("Time (frames)")
     ax2.set_ylabel("TCP Speed (mm/s)")
     ax2.set_title("Real-time TCP Speed")
@@ -48,7 +47,7 @@ def update_graphs(frame, speed_data, tcp_speed_data, total_tcp_speed, ax1, ax2, 
     # TCP 전체 속력 그래프 업데이트
     ax3.cla()
     ax3.plot(total_tcp_speed, label="Total TCP Speed", color="purple")
-    ax3.set_ylim(0, 5)
+    ax3.set_ylim(0, max(total_tcp_speed) * 1.1)
     ax3.set_xlabel("Time (frames)")
     ax3.set_ylabel("Speed (mm/s)")
     ax3.set_title("Total TCP Speed")
@@ -89,7 +88,7 @@ def main_loop(
 ):
     # Pygame 초기 설정
     pygame.init()
-    h, w = 1200, 1200
+    h, w = 1500, 1500
     screen = pygame.display.set_mode((w, h))
     pygame.display.set_caption("TCP Speed Visualization")
     clock = pygame.time.Clock()
@@ -130,6 +129,30 @@ def main_loop(
         relative_rect=pygame.Rect((50, 340), (300, 50)),
         start_value=100,
         value_range=(100, 2000),
+        manager=manager,
+    )
+
+    # 드래그 속도 조절 슬라이더
+    drag_speed_slider = pygame_gui.elements.UIHorizontalSlider(
+        relative_rect=pygame.Rect((50, 400), (300, 50)),
+        start_value=1.0,
+        value_range=(0.1, 5.0),
+        manager=manager,
+    )
+
+    # 최대 속도 조절 슬라이더
+    max_speed_slider = pygame_gui.elements.UIHorizontalSlider(
+        relative_rect=pygame.Rect((50, 460), (300, 50)),
+        start_value=10.0,
+        value_range=(1.0, 20.0),
+        manager=manager,
+    )
+
+    # 감도 조절 슬라이더
+    sensitivity_slider = pygame_gui.elements.UIHorizontalSlider(
+        relative_rect=pygame.Rect((50, 520), (300, 50)),
+        start_value=1.0,
+        value_range=(0.1, 3.0),
         manager=manager,
     )
 
@@ -190,6 +213,9 @@ def main_loop(
                     or dt_slider.rect.collidepoint(event.pos)
                     or lookahead_slider.rect.collidepoint(event.pos)
                     or gain_slider.rect.collidepoint(event.pos)
+                    or drag_speed_slider.rect.collidepoint(event.pos)
+                    or max_speed_slider.rect.collidepoint(event.pos)
+                    or sensitivity_slider.rect.collidepoint(event.pos)
                 ):
                     slider_active = True
                 else:
@@ -219,6 +245,10 @@ def main_loop(
         dt = dt_slider.get_current_value()
         lookahead_time = lookahead_slider.get_current_value()
         gain = gain_slider.get_current_value()
+        lookahead_time = lookahead_slider.get_current_value()
+        drag_speed_factor = drag_speed_slider.get_current_value()  # 드래그 속도 조절
+        max_speed = max_speed_slider.get_current_value()  # 최대 속도 조절
+        sensitivity = sensitivity_slider.get_current_value()  # 감도 조절
 
         if drag_activate and last_position is not None:
             # 마우스 이동 거리 계산
@@ -226,18 +256,21 @@ def main_loop(
             p2 = pygame.mouse.get_pos()
 
             if p1 != p2:  # 마우스가 움직였을 때만 속도 계산
-                v_tot = Vector(p2[0] - p1[0], p2[1] - p1[1])
+                v_tot = Vector(
+                    (p2[0] - p1[0]) * sensitivity, (p2[1] - p1[1]) * sensitivity
+                )
                 last_position = p2
 
                 # 이동 속도 계산 (픽셀 단위 속도)
-                speed = v_tot.dist()
+                speed = (v_tot.dist() * drag_speed_factor) / 10  # 드래그 속도 조절
+                print(speed)
 
                 # 속도 기록 업데이트
                 speed_history.append(speed)
 
                 # 속도 제한
-                if speed > MAX_SPEED:
-                    speed = MAX_SPEED
+                if speed > max_speed:
+                    speed = max_speed
 
                 if speed != 0:
                     v_normal = Vector(v_tot.x / speed, v_tot.y / speed)
@@ -309,11 +342,19 @@ def main_loop(
         dt_text = font.render(f"dt: {dt:.3f} s", True, WHITE)
         lookahead_text = font.render(f"Lookahead: {lookahead_time:.3f} s", True, WHITE)
         gain_text = font.render(f"Gain: {int(gain)}", True, WHITE)
+        drag_speed_text = font.render(
+            f"Drag Speed: {drag_speed_factor:.1f}", True, WHITE
+        )
+        max_speed_text = font.render(f"Max Speed: {max_speed:.1f} mm/s", True, WHITE)
+        sensitivity_text = font.render(f"Sensitivity: {sensitivity:.1f}", True, WHITE)
         screen.blit(velocity_text, (360, 95))
         screen.blit(acceleration_text, (360, 155))
         screen.blit(dt_text, (360, 215))
         screen.blit(lookahead_text, (360, 275))
         screen.blit(gain_text, (360, 335))
+        screen.blit(drag_speed_text, (360, 395))
+        screen.blit(max_speed_text, (360, 455))
+        screen.blit(sensitivity_text, (360, 515))
 
         manager.draw_ui(screen)
         pygame.display.flip()
