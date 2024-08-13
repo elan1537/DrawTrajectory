@@ -21,7 +21,9 @@ SPEED_HISTORY_SIZE = 100  # 그래프에 표시할 속도 기록 수
 start_point_offset = np.array([224.91, 109.15], dtype=np.float64)  # 오프셋 정의
 
 
-def update_graphs(frame, speed_data, tcp_speed_data, total_tcp_speed, ax1, ax2, ax3):
+def update_graphs(
+    frame, speed_data, tcp_speed_data, total_tcp_speed, total_diff, ax1, ax2, ax3, ax4
+):
     # 마우스 속도 그래프 업데이트
     ax1.cla()
     ax1.plot(speed_data, label="Mouse Speed")
@@ -54,11 +56,22 @@ def update_graphs(frame, speed_data, tcp_speed_data, total_tcp_speed, ax1, ax2, 
     ax3.legend(loc="upper right")
     ax3.grid(True)
 
+    ax4.cla()
+    ax4.plot(total_diff, label="Total Difference", color="red")
+    ax4.set_ylim(0, max(total_diff) * 1.1)
+    ax4.set_xlabel("Time (frames)")
+    ax4.set_ylabel("Difference (mm)")
+    ax4.set_title("Total Difference")
+    ax4.legend(loc="upper right")
+    ax4.grid(True)
 
-def graph_process(speed_history, tcp_speed_history, total_tcp_speed_history):
+
+def graph_process(
+    speed_history, tcp_speed_history, total_tcp_speed_history, total_diff
+):
     plt.ion()  # Interactive mode on to handle multiple figures
 
-    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 12))
+    fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(10, 12))
 
     ani = FuncAnimation(
         fig,
@@ -67,9 +80,11 @@ def graph_process(speed_history, tcp_speed_history, total_tcp_speed_history):
             speed_history,
             tcp_speed_history,
             total_tcp_speed_history,
+            total_diff,
             ax1,
             ax2,
             ax3,
+            ax4,
         ),
         interval=100,
     )
@@ -136,6 +151,7 @@ def main_loop(
     speed_history,
     tcp_speed_history,
     total_tcp_speed_history,
+    total_diff,
 ):
     # Pygame 초기 설정
     pygame.init()
@@ -342,13 +358,15 @@ def main_loop(
         )
         to_ = [robot_point[0] * 0.001, robot_point[1] * 0.001, 0.0, 2.223, -2.222, 0.0]
 
-        if speed and (time.time() - init_period > 1 / 60):
+        x, y = rtde_r.getActualTCPPose()[:2]
+        diff = np.linalg.norm((robot_point[0] / 1000 - x, robot_point[1] / 1000 - y))
+        device_points.add((int(x * 1000) + w // 2, -int(y * 1000) + h // 2))
+        total_diff.append(diff)
+
+        if diff > 0 and time.time() - init_period > 1 / 60:
             joint_q = rtde_c.getInverseKinematics(to_)
             # acc, vel, t, lookahead_time, gain
             rtde_c.servoJ(joint_q, acceleration, velocity, dt, lookahead_time, gain)
-
-            x, y = rtde_r.getActualTCPPose()[:2]
-            device_points.add((int(x * 1000) + w // 2, -int(y * 1000) + h // 2))
 
         init_period = time.time()
 
@@ -408,10 +426,12 @@ if __name__ == "__main__":
         [0] * SPEED_HISTORY_SIZE
     )  # 전체 TCP 속력을 저장
 
+    total_diff = mp_manager.list([0] * SPEED_HISTORY_SIZE)
+
     # 그래프를 그리는 프로세스 시작
     graph_proc = mp.Process(
         target=graph_process,
-        args=(speed_history, tcp_speed_history, total_tcp_speed_history),
+        args=(speed_history, tcp_speed_history, total_tcp_speed_history, total_diff),
     )
     graph_proc.start()
 
@@ -422,6 +442,7 @@ if __name__ == "__main__":
         speed_history=speed_history,
         tcp_speed_history=tcp_speed_history,
         total_tcp_speed_history=total_tcp_speed_history,
+        total_diff=total_diff,
     )
 
     # 프로세스가 종료되기를 기다림
