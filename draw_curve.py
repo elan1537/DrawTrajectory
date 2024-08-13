@@ -78,6 +78,57 @@ def graph_process(speed_history, tcp_speed_history, total_tcp_speed_history):
     plt.show(block=True)  # Show figures in separate windows
 
 
+def handle_events(
+    drag_activate,
+    slider_active,
+    last_position,
+    last_points,
+    trajectory,
+    manager,
+    start_point_offset,
+):
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            return False, drag_activate, slider_active, last_position
+
+        # 키보드 이벤트 처리
+        elif event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_q:  # 'q' 키를 눌렀을 때
+                return False, drag_activate, slider_active, last_position
+
+        elif event.type == pygame.MOUSEBUTTONDOWN:
+            # 슬라이더가 클릭된 경우 드래그를 비활성화
+            if (
+                velocity_slider.rect.collidepoint(event.pos)
+                or acceleration_slider.rect.collidepoint(event.pos)
+                or dt_slider.rect.collidepoint(event.pos)
+                or lookahead_slider.rect.collidepoint(event.pos)
+                or gain_slider.rect.collidepoint(event.pos)
+                or drag_speed_slider.rect.collidepoint(event.pos)
+                or max_speed_slider.rect.collidepoint(event.pos)
+                or sensitivity_slider.rect.collidepoint(event.pos)
+            ):
+                slider_active = True
+            else:
+                drag_activate = True
+                last_points.clear()
+                last_position = event.pos  # 마우스가 눌렸을 때 초기 위치 설정
+
+        elif event.type == pygame.MOUSEMOTION:
+            if drag_activate and not slider_active:
+                last_points.append(event.pos)
+
+        elif event.type == pygame.MOUSEBUTTONUP:
+            if slider_active:
+                slider_active = False
+            if event.button == 1:
+                drag_activate = False
+
+        manager.process_events(event)
+
+    return True, drag_activate, slider_active, last_position, last_points
+
+
 def main_loop(
     robot_ip,
     initial_velocity,
@@ -95,6 +146,8 @@ def main_loop(
 
     # Pygame GUI 설정
     manager = pygame_gui.UIManager((w, h))
+
+    global velocity_slider, acceleration_slider, dt_slider, lookahead_slider, gain_slider, drag_speed_slider, max_speed_slider, sensitivity_slider
 
     # 슬라이더 생성
     velocity_slider = pygame_gui.elements.UIHorizontalSlider(
@@ -166,6 +219,7 @@ def main_loop(
     # Global variables
     drag_activate = False
     slider_active = False
+    last_position = None
     last_points = deque(maxlen=RECENT_POINT)
     trajectory = set()
     speed = 0  # 현재 속도를 저장할 변수
@@ -197,44 +251,17 @@ def main_loop(
         # 중앙 원 그리기
         pygame.draw.circle(screen, GRAY, (w // 2, h // 2), 250)
 
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_q:  # 'q' 키를 눌렀을 때
-                    running = False
-
-            elif event.type == pygame.MOUSEBUTTONDOWN:
-                # 슬라이더가 클릭된 경우 드래그를 비활성화
-                if (
-                    velocity_slider.rect.collidepoint(event.pos)
-                    or acceleration_slider.rect.collidepoint(event.pos)
-                    or dt_slider.rect.collidepoint(event.pos)
-                    or lookahead_slider.rect.collidepoint(event.pos)
-                    or gain_slider.rect.collidepoint(event.pos)
-                    or drag_speed_slider.rect.collidepoint(event.pos)
-                    or max_speed_slider.rect.collidepoint(event.pos)
-                    or sensitivity_slider.rect.collidepoint(event.pos)
-                ):
-                    slider_active = True
-                else:
-                    drag_activate = True
-                    last_points.clear()
-                    device_points.clear()
-                    last_position = event.pos  # 마우스가 눌렸을 때 초기 위치 설정
-
-            elif event.type == pygame.MOUSEMOTION:
-                if drag_activate and not slider_active:
-                    last_points.append(event.pos)
-
-            elif event.type == pygame.MOUSEBUTTONUP:
-                if slider_active:
-                    slider_active = False
-                if event.button == 1:
-                    drag_activate = False
-
-            manager.process_events(event)
+        running, drag_activate, slider_active, last_position, last_points = (
+            handle_events(
+                drag_activate,
+                slider_active,
+                last_position,
+                last_points,
+                trajectory,
+                manager,
+                start_point_offset,
+            )
+        )
 
         time_delta = clock.tick(60) / 1000.0
         manager.update(time_delta)
